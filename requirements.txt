@@ -1,0 +1,8 @@
+# ALFWorld
+alfworld>=0.3.3
+
+# VirtualHome
+virtualhome>=2.3.0
+
+# Numerical computation
+numpy>=1.24.0

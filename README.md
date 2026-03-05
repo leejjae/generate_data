@@ -6,6 +6,23 @@ All scripts are located under `generation/`.
 
 ---
 
+## Environment Setup
+
+### Create conda virtual environment
+
+```bash
+conda create -n data python=3.10 -y
+conda activate data
+```
+
+### Install dependencies (Ubuntu)
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
 ## ALFWorld (`./data_alfworld/`)
 
 ### Prerequisites
