@@ -18,7 +18,8 @@ conda activate data
 ### Install dependencies (Ubuntu)
 
 ```bash
-pip install -r requirements.txt
+chmod +x install.sh
+bash install.sh
 ```
 
 ---

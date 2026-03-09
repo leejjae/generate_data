@@ -1,12 +1,8 @@
 # ALFWorld
 alfworld>=0.3.3
-torch>=2.0.0
-torchvision>=0.15.0
-tqdm
-werkzeug==2.0.3
 
-# VirtualHome
-virtualhome>=2.3.0
+# opencv-python: compatible with Python 3.10+ (replaces virtualhome's pinned 4.5.1.48)
+opencv-python>=4.9.0
 
 # Numerical computation
 numpy>=1.24.0
