@@ -40,6 +40,7 @@ import shutil
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.virtualhome.const import TASKS, SEEN_TASKS, UNSEEN_TASKS, SEEN_DOMAIN, UNSEEN_DOMAIN
 

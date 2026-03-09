@@ -1,5 +1,9 @@
 # ALFWorld
 alfworld>=0.3.3
+torch>=2.0.0
+torchvision>=0.15.0
+tqdm
+werkzeug==2.0.3
 
 # VirtualHome
 virtualhome>=2.3.0
