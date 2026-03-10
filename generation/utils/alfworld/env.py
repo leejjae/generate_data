@@ -3,7 +3,8 @@ from __future__ import annotations
 import os.path as osp
 from argparse import Namespace
 from pathlib import Path
-from typing import Any, Callable, cast, overload, override
+from typing import Any, Callable, cast, overload
+from typing_extensions import override
 
 import alfworld.agents
 import alfworld.gen.constants as constants
