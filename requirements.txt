@@ -11,7 +11,7 @@ h5py>=3.0
 ai2thor>=2.1.0
 typing_extensions>=4.0
 
-# VirtualHome runtime deps (local ./virtualhome/ is used directly; PyPI package not needed)
+# VirtualHome runtime deps (local ./virtualhome/ is used directly, PyPI package not needed)
 opencv-python>=4.9.0
 numpy>=1.24.0
 matplotlib
