@@ -36,11 +36,14 @@ Xvfb :1 -screen 0 1024x768x24 &
 export DISPLAY=:1
 ```
 
-ALFWorld data (JSON trajectories + AI2-THOR binary) is downloaded automatically on first run via `alfworld-download`. To download manually:
+**Download the AI2-THOR Unity binary** (required for Step 2):
 
 ```bash
-alfworld-download --extra
+chmod +x download_ai2thor_binary.sh
+bash download_ai2thor_binary.sh
 ```
+
+This downloads `thor-201909061227-Linux64.zip` (~390 MB) from the AI2-THOR S3 bucket and installs it to `~/.ai2thor/releases/thor-201909061227-Linux64/`.
 
 ### Step 1: Collect expert trajectories
 
