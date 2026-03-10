@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, NewType, NotRequired, TypedDict, TypeGuard, TypeVarTuple
+from typing import Any, NewType, TypedDict, TypeGuard
+from typing_extensions import NotRequired, TypeVarTuple
 
 from utils.alfworld.env import Relations
 
