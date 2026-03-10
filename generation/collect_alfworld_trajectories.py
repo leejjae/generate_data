@@ -126,6 +126,7 @@ def collect_trajectories(output_path: str, split: str = "train", task_types: lis
 
 def main():
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(
         description="Collect ALFWorld expert trajectories in JSONL format "
@@ -157,7 +158,12 @@ def main():
         help="Task type IDs to collect (1=pick_place, 2=pick_two, 3=look_at_light, "
              "4=pick_clean_place, 5=pick_heat_place, 6=pick_cool_place). Default: all.",
     )
-    args = parser.parse_args()
+    args, remaining = parser.parse_known_args()
+
+    # generic.load_config() internally re-parses sys.argv using alfworld's own argparse.
+    # Strip our custom args so alfworld only sees config_file and any -p overrides.
+    sys.argv = [sys.argv[0], args.config_file] + remaining
+
     collect_trajectories(args.output_path, args.split, args.task_types)
 
 
