@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "generate-data"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    # ALFWorld text environment + expert + CLI (alfworld-download)
+    "alfworld[full]==0.4.2",
+    # VirtualHome Python API (UnityEnvironment, ExpertPolicy)
+    # Installed without its pinned opencv – see override below.
+    "virtualhome>=2.3.0",
+    # Override virtualhome's opencv-python==4.5.1.48 pin to a compatible version.
+    # This must also be listed here so uv resolves it explicitly.
+    "opencv-python>=4.9.0",
+    # Utilities
+    "numpy>=1.24.0",
+    "tqdm>=4.66",
+    # Deep-learning stack (used downstream; cu128 index configured below)
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
+]
+
+[tool.setuptools]
+# No Python packages to install from this repo itself;
+# alfworld/ and virtualhome/ under the project root are local source trees
+# used for reference only – they are not installed as packages.
+packages = []
+
+# ---------------------------------------------------------------------------
+# uv configuration
+# ---------------------------------------------------------------------------
+
+[tool.uv]
+# virtualhome>=2.3.0 hard-pins opencv-python==4.5.1.48 in its metadata.
+# The override below replaces that constraint for the entire resolution,
+# avoiding the conflict without needing --no-deps.
+override-dependencies = [
+    "opencv-python>=4.9.0",
+]
+
+# PyTorch CUDA 12.8 index (explicit = only used for packages that opt in via
+# [tool.uv.sources], not for every package resolution).
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }

@@ -12,15 +12,12 @@ Usage:
 
 JSONL format (one line per step):
     {
-        "env_id": int,            # House ID (from VALID_HOUSE)
-        "task_id": int,           # Task index in TASKS list
-        "instruction": str,       # Task name e.g. "Turn on tv"
-        "action": str,            # Action taken e.g. "walk tv"
-        "position_graph": dict,   # Full position graph (nodes + edges) - same for all steps
-        "visible_graph": dict,    # Visible objects graph before action
-        "agent_graph": dict,      # Agent relation graph before action
-        "next_visible_graph": dict,  # Visible objects graph after action
-        "next_agent_graph": dict,    # Agent relation graph after action
+        "env_id": int,               # House ID (from VALID_HOUSE)
+        "task_id": int,              # Task index in TASKS list
+        "instruction": str,          # Task name e.g. "Turn on tv"
+        "observation_text": str,     # Text observation before action (o_t)
+        "action": str,               # Action taken e.g. "walk tv"
+        "next_observation_text": str, # Text observation after action (o_{t+1})
     }
 """
 
@@ -202,13 +199,43 @@ def _make_script(task_name: str, env: UnityEnvironment) -> list[str]:
     return enhanced
 
 
+def _graph_to_text(visible_graph_triples: dict, agent_graph_triples: dict) -> str:
+    """Convert VirtualHome triples-mode graphs to a text observation.
+
+    Example output:
+        "You are in the kitchen. You can see: tv, sofa, apple. tv is off. You are holding: apple."
+    """
+    parts = []
+
+    # Agent location: Person INSIDE <room>
+    for edge in agent_graph_triples.get("edges", []):
+        if edge[1] == "INSIDE":
+            parts.append(f"You are in the {edge[2]}.")
+            break
+
+    # Visible objects
+    visible_nodes = visible_graph_triples.get("nodes", [])
+    if visible_nodes:
+        parts.append(f"You can see: {', '.join(visible_nodes)}.")
+
+    # Object states (e.g. "tv is off")
+    for edge in visible_graph_triples.get("edges", []):
+        if edge[1] == "is":
+            parts.append(f"{edge[0]} is {edge[2]}.")
+
+    # Objects held by the agent
+    held = [e[2] for e in agent_graph_triples.get("edges", []) if e[1] == "HOLD"]
+    if held:
+        parts.append(f"You are holding: {', '.join(held)}.")
+
+    return " ".join(parts) if parts else "You observe the environment."
+
+
 def run_episode(
     env: UnityEnvironment,
     task_name: str,
     task_id: int,
     env_id: int,
-    position_graph: dict,
-    initial_obs: dict,
     max_steps: int = 100,
 ) -> list[dict]:
     """Run one episode with ExpertPolicy; return trajectory steps."""
@@ -217,18 +244,16 @@ def run_episode(
     expert.reset(script)
 
     trajectory: list[dict] = []
-    obs = initial_obs  # obs from env.reset() or previous env.step()
 
     for _step in range(max_steps):
-        # Pre-action graphs in json mode (for JSONL storage)
-        visible_graph_json = obs.get("visible_graph") or {"nodes": [], "edges": []}
-        agent_graph_json = obs.get("agent_graph") or {"nodes": [], "edges": []}
-
-        # Triples mode for ExpertPolicy (re-uses Unity's cached graph, no extra calls)
+        # Triples mode for ExpertPolicy and observation_text generation
         visible_graph_triples = (
             env.get_visible_graph(mode="triples") or {"nodes": [], "edges": []}
         )
         agent_graph_triples = env.get_agent_graph(mode="triples")
+
+        # o_t: text observation before action
+        observation_text = _graph_to_text(visible_graph_triples, agent_graph_triples)
 
         # Feed available objects to the expert
         name_to_id = _get_available_objects(env)
@@ -241,23 +266,23 @@ def run_episode(
             break
 
         # Execute action in the simulator
-        obs, _reward, done, _info = env.step(action)
+        _, _reward, done, _info = env.step(action)
 
-        # Post-action graphs
-        next_visible_graph = obs.get("visible_graph") or {"nodes": [], "edges": []}
-        next_agent_graph = obs.get("agent_graph") or {"nodes": [], "edges": []}
+        # o_{t+1}: text observation after action (triples re-use post-step cache)
+        next_visible_graph_triples = (
+            env.get_visible_graph(mode="triples") or {"nodes": [], "edges": []}
+        )
+        next_agent_graph_triples = env.get_agent_graph(mode="triples")
+        next_observation_text = _graph_to_text(next_visible_graph_triples, next_agent_graph_triples)
 
         trajectory.append(
             {
                 "env_id": env_id,
                 "task_id": task_id,
                 "instruction": task_name,
+                "observation_text": observation_text,
                 "action": action,
-                "position_graph": position_graph,
-                "visible_graph": visible_graph_json,
-                "agent_graph": agent_graph_json,
-                "next_visible_graph": next_visible_graph,
-                "next_agent_graph": next_agent_graph,
+                "next_observation_text": next_observation_text,
             }
         )
 
@@ -432,8 +457,6 @@ def generate_data(
                 print(f"[{count}/{total}] Generating: {task_name} / env{env_id}")
 
             # --- Reset (with one restart-and-retry on timeout) ---
-            obs = None
-            position_graph = None
             reset_ok = False
             for attempt in range(2):
                 try:
@@ -443,8 +466,7 @@ def generate_data(
                             "prohibited_condition": [],
                         }
                     )
-                    obs = env.reset(environment_id=env_id)
-                    position_graph = env.get_position_graph()
+                    env.reset(environment_id=env_id)
                     reset_ok = True
                     break
 
@@ -479,8 +501,6 @@ def generate_data(
                         task_name=task_name,
                         task_id=task_id,
                         env_id=env_id,
-                        position_graph=position_graph,
-                        initial_obs=obs,
                         max_steps=max_steps,
                     )
                     break
@@ -498,8 +518,7 @@ def generate_data(
                                     "prohibited_condition": [],
                                 }
                             )
-                            obs = env.reset(environment_id=env_id)
-                            position_graph = env.get_position_graph()
+                            env.reset(environment_id=env_id)
                         except Exception as re_e:
                             if verbose:
                                 print(f"    Re-setup after restart failed: {re_e}")
