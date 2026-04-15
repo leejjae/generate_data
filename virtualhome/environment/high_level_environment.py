@@ -65,6 +65,7 @@ class ExpertPolicy(object):
                     if room in self.available_objects and room != agent_room:
                         self.room_finding = 0
                         action = "walk {}".format(room)
+                        break
         elif self.type_of_instruction(temp_instruction) == "interaction":
             if target_object in self.available_objects:
                 self.temp_instruction_idx += 1

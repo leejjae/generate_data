@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "generate-data"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     # ALFWorld text environment + expert + CLI (alfworld-download)
     "alfworld[full]==0.4.2",
@@ -39,10 +39,15 @@ packages = []
 # avoiding the conflict without needing --no-deps.
 override-dependencies = [
     "opencv-python>=4.9.0",
+    "tqdm>=4.66",
+    "networkx>=3.0",
 ]
 
 # PyTorch CUDA 12.8 index (explicit = only used for packages that opt in via
 # [tool.uv.sources], not for every package resolution).
+[tool.uv.extra-build-dependencies]
+visdom = ["setuptools<71"]
+
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"

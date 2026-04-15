@@ -23,11 +23,21 @@ def _maybe_download_alfworld_data():
         _download_alfworld_data()
 
 
+_JSON_SPLITS = ["train", "valid_seen", "valid_train", "valid_unseen"]
+
+
 def _load_trajectory(traj_name: str):
-    return load_trajectory(
-        os.path.join(
-            _alfworld_root, "json_2.1.1", "train", traj_name, "traj_data.json"
+    """Load trajectory data, searching across all json_2.1.1 splits.
+    Returns (trajectory_data, trajectory_root) tuple."""
+    for split in _JSON_SPLITS:
+        path = os.path.join(
+            _alfworld_root, "json_2.1.1", split, traj_name, "traj_data.json"
         )
+        if os.path.exists(path):
+            traj_root = os.path.join(_alfworld_root, "json_2.1.1", split)
+            return load_trajectory(path), traj_root
+    raise FileNotFoundError(
+        f"traj_data.json not found for {traj_name} in any split: {_JSON_SPLITS}"
     )
 
 
@@ -73,9 +83,9 @@ def generate_alfworld_data(original_path: str, output_path: str):
         if data["trial_name"] in trials:
             continue
         trial_name = data["trial_name"].replace("_trial", f"{os.sep}trial")
-        traj = _load_trajectory(trial_name)
+        traj, traj_root = _load_trajectory(trial_name)
         env.reset(
-            trajectory_root=os.path.join(_alfworld_root, "json_2.1.1", "train"),
+            trajectory_root=traj_root,
             trajectory_data=traj,
         )
         for step in data["history"]:

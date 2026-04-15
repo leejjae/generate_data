@@ -25,10 +25,22 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 import traceback
 import types
 from pathlib import Path
+
+# The pip-installed virtualhome package lacks the environment/ subpackage;
+# it lives in the local source tree at <project_root>/virtualhome/.
+# Add the project root to sys.path so that
+# ``from virtualhome.environment.…`` resolves to the local copy.
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+# Force re-import from local source tree (not the pip-installed stub).
+sys.modules.pop("virtualhome", None)
 
 from virtualhome.environment.high_level_environment import (
     ExpertPolicy,
@@ -45,7 +57,7 @@ VALID_HOUSE = list(
 
 # Simulator binary and log paths (used for automatic restart on timeout)
 _SIM_EXEC = (
-    "/workspace/tmow/tmow/environments/virtualhome/virtualhome/simulation/"
+    "/workspace/dataset/simulation/"
     "linux_exec.v2.3.0.x86_64"
 )
 _SIM_LOG = "/tmp/vh_sim.log"
@@ -67,12 +79,19 @@ def find_object_room(env: UnityEnvironment, obj_name: str) -> str | None:
         if edge["relation_type"] == "INSIDE":
             inside_parent[edge["from_id"]] = edge["to_id"]
 
-    # Find object node IDs matching obj_name
+    # Find object node IDs matching obj_name (exact match first, then suffix match)
+    obj_lower = obj_name.lower()
     target_ids = [
         node["id"]
         for node in graph["nodes"]
-        if node.get("class_name", "").lower() == obj_name.lower()
+        if node.get("class_name", "").lower() == obj_lower
     ]
+    if not target_ids:
+        target_ids = [
+            node["id"]
+            for node in graph["nodes"]
+            if node.get("class_name", "").lower().endswith(obj_lower)
+        ]
 
     # BFS up the containment tree from each candidate
     for start_id in target_ids:
@@ -160,6 +179,72 @@ def _get_available_objects(env: UnityEnvironment) -> dict:
 _ROOMS = {"kitchen", "bedroom", "livingroom", "bathroom"}
 
 
+def _get_approx_visible_graph(env: UnityEnvironment, mode: str = "triples") -> dict:
+    """Build an approximate visible graph without image rendering.
+
+    Uses same-room and close objects as a proxy for visibility.
+    Falls back to get_visible_graph() if available, but catches errors.
+    """
+    try:
+        result = env.get_visible_graph(mode=mode)
+        if result is not None:
+            return result
+    except Exception:
+        pass
+
+    # Fallback: use same-room objects as proxy for visibility
+    graph = env.get_graph()
+    id_to_class = {n["id"]: n["class_name"] for n in graph["nodes"]}
+    id_to_node = {n["id"]: n for n in graph["nodes"]}
+
+    try:
+        same_room_ids = set(env.get_same_room_objects())
+    except Exception:
+        same_room_ids = set()
+    try:
+        close_ids = set(env.get_close_objects())
+    except Exception:
+        close_ids = set()
+
+    visible_ids = same_room_ids | close_ids
+    BASE_COMPONENT = {"Walls", "Ceiling", "Floor", "Floors", "Doors", "Windows"}
+
+    kg: dict = {"nodes": [], "edges": []}
+    for nid in visible_ids:
+        node = id_to_node.get(nid)
+        if node is None or node.get("category") in BASE_COMPONENT:
+            continue
+        if mode == "triples":
+            kg["nodes"].append(node["class_name"].lower())
+            for s in node.get("states", []):
+                kg["edges"].append((node["class_name"], "is", s))
+        else:
+            kg["nodes"].append(node)
+            for s in node.get("states", []):
+                kg["edges"].append(
+                    {"from_id": node["id"], "relation_type": "IS", "to_id": s}
+                )
+
+    for edge in graph["edges"]:
+        if (
+            edge["from_id"] in visible_ids
+            and edge["to_id"] in visible_ids
+            and edge["relation_type"] in ("INSIDE", "ON")
+        ):
+            if mode == "triples":
+                kg["edges"].append(
+                    (
+                        id_to_class.get(edge["from_id"], "?"),
+                        edge["relation_type"],
+                        id_to_class.get(edge["to_id"], "?"),
+                    )
+                )
+            else:
+                kg["edges"].append(edge)
+
+    return kg
+
+
 def _make_script(task_name: str, env: UnityEnvironment) -> list[str]:
     """Build an ExpertPolicy script with room-navigation instructions inserted.
 
@@ -231,6 +316,15 @@ def _graph_to_text(visible_graph_triples: dict, agent_graph_triples: dict) -> st
     return " ".join(parts) if parts else "You observe the environment."
 
 
+# Low-level navigation primitives that should NOT appear in the final trajectory.
+_LOW_LEVEL_ACTIONS = {"turnright", "turnleft", "walkforward"}
+
+
+def _is_high_level_action(action: str) -> bool:
+    """Return True if action is a high-level task action (not a navigation primitive)."""
+    return action.split()[0] not in _LOW_LEVEL_ACTIONS
+
+
 def run_episode(
     env: UnityEnvironment,
     task_name: str,
@@ -238,22 +332,29 @@ def run_episode(
     env_id: int,
     max_steps: int = 100,
 ) -> list[dict]:
-    """Run one episode with ExpertPolicy; return trajectory steps."""
+    """Run one episode with ExpertPolicy; return trajectory steps.
+
+    Only high-level actions (walk, grab, open, put, putin, switchon) are
+    recorded.  Low-level navigation primitives (turnright, turnleft,
+    walkforward) are executed in the simulator but excluded from the
+    saved trajectory.
+    """
     script = _make_script(task_name, env)
     expert = ExpertPolicy()
     expert.reset(script)
 
     trajectory: list[dict] = []
+    _recent_actions: list[str] = []  # loop detection buffer
+
+    # Capture the observation *before* any low-level navigation sequence
+    # so the recorded o_t corresponds to the state just before the
+    # high-level action was issued.
+    pending_observation_text: str | None = None
 
     for _step in range(max_steps):
         # Triples mode for ExpertPolicy and observation_text generation
-        visible_graph_triples = (
-            env.get_visible_graph(mode="triples") or {"nodes": [], "edges": []}
-        )
+        visible_graph_triples = _get_approx_visible_graph(env, mode="triples")
         agent_graph_triples = env.get_agent_graph(mode="triples")
-
-        # o_t: text observation before action
-        observation_text = _graph_to_text(visible_graph_triples, agent_graph_triples)
 
         # Feed available objects to the expert
         name_to_id = _get_available_objects(env)
@@ -265,29 +366,60 @@ def run_episode(
             # Script finished
             break
 
-        # Execute action in the simulator
-        _, _reward, done, _info = env.step(action)
+        if _is_high_level_action(action):
+            # Loop detection: abort if the last 6 high-level actions repeat
+            # a 2-action pattern (e.g. walk roomA, walk roomB, ...)
+            _recent_actions.append(action)
+            if len(_recent_actions) >= 6:
+                tail = _recent_actions[-6:]
+                if tail[0] == tail[2] == tail[4] and tail[1] == tail[3] == tail[5]:
+                    break
 
-        # o_{t+1}: text observation after action (triples re-use post-step cache)
-        next_visible_graph_triples = (
-            env.get_visible_graph(mode="triples") or {"nodes": [], "edges": []}
-        )
-        next_agent_graph_triples = env.get_agent_graph(mode="triples")
-        next_observation_text = _graph_to_text(next_visible_graph_triples, next_agent_graph_triples)
+            # Capture o_t: use the pending observation (from before nav
+            # primitives) if available, otherwise use the current state.
+            if pending_observation_text is None:
+                observation_text = _graph_to_text(
+                    visible_graph_triples, agent_graph_triples
+                )
+            else:
+                observation_text = pending_observation_text
+                pending_observation_text = None
 
-        trajectory.append(
-            {
-                "env_id": env_id,
-                "task_id": task_id,
-                "instruction": task_name,
-                "observation_text": observation_text,
-                "action": action,
-                "next_observation_text": next_observation_text,
-            }
-        )
+            # Execute the high-level action in the simulator
+            _, _reward, done, _info = env.step(action)
 
-        if done:
-            break
+            # o_{t+1}: text observation after action
+            next_visible_graph_triples = _get_approx_visible_graph(
+                env, mode="triples"
+            )
+            next_agent_graph_triples = env.get_agent_graph(mode="triples")
+            next_observation_text = _graph_to_text(
+                next_visible_graph_triples, next_agent_graph_triples
+            )
+
+            trajectory.append(
+                {
+                    "env_id": env_id,
+                    "task_id": task_id,
+                    "instruction": task_name,
+                    "observation_text": observation_text,
+                    "action": action,
+                    "next_observation_text": next_observation_text,
+                }
+            )
+
+            if done:
+                break
+        else:
+            # Low-level action: execute but don't record.
+            # Save the pre-navigation observation for the next high-level step.
+            if pending_observation_text is None:
+                pending_observation_text = _graph_to_text(
+                    visible_graph_triples, agent_graph_triples
+                )
+            _, _reward, done, _info = env.step(action)
+            if done:
+                break
 
     return trajectory
 
@@ -309,8 +441,8 @@ def _make_env(port: int, url: str) -> UnityEnvironment:
     def _obs_no_image(self):
         return {
             "image": None,
-            "visible_graph": self.get_visible_graph(),
-            "agent_graph": self.get_agent_graph(),
+            "visible_graph": None,
+            "agent_graph": None,
         }
 
     env.get_observations = types.MethodType(_obs_no_image, env)
@@ -531,9 +663,9 @@ def generate_data(
             if trajectory is None:
                 continue
 
-            if not trajectory:
+            if len(trajectory) < 2:
                 if verbose:
-                    print(f"    Empty trajectory, skipping")
+                    print(f"    Trajectory too short ({len(trajectory)} steps), skipping")
                 continue
 
             with open(output_file, "w") as f:

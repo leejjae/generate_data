@@ -174,13 +174,28 @@ def split_virtualhome(data_dir: Path) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    root = Path(__file__).parent.parent
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Split datasets into seen/unseen domains")
+    parser.add_argument(
+        "--alfworld_dir",
+        type=Path,
+        default=Path(__file__).parent.parent / "data_alfworld",
+        help="ALFWorld data directory",
+    )
+    parser.add_argument(
+        "--virtualhome_dir",
+        type=Path,
+        default=Path(__file__).parent.parent / "data_virtualhome",
+        help="VirtualHome data directory",
+    )
+    args = parser.parse_args()
 
     print("=== ALFWorld ===")
-    split_alfworld(root / "data_alfworld")
+    split_alfworld(args.alfworld_dir)
 
     print("\n=== VirtualHome ===")
-    split_virtualhome(root / "data_virtualhome")
+    split_virtualhome(args.virtualhome_dir)
 
     print("\nDone.")
 

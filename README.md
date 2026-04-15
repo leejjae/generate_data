@@ -20,11 +20,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 ```
 
-`uv sync` reads `pyproject.toml`, creates `.venv/` with Python ≥ 3.12, and installs all
+`uv sync` reads `pyproject.toml`, creates `.venv/` with Python 3.12, and installs all
 dependencies — including the PyTorch CUDA 12.8 build — in a single locked step.
-The `virtualhome` package pins `opencv-python==4.5.1.48` in its metadata; the
-`[tool.uv] override-dependencies` entry in `pyproject.toml` replaces that pin with
-`opencv-python>=4.9.0` automatically, so no `--no-deps` workaround is needed.
+The `virtualhome` package pins `opencv-python==4.5.1.48` and `tqdm==4.31.1` in its
+metadata; the `[tool.uv] override-dependencies` entries in `pyproject.toml` replace
+those pins with compatible versions automatically, so no `--no-deps` workaround is
+needed. Additionally, `visdom==0.2.4` (via `alfworld[full]`) requires `setuptools`
+at build time; the `[tool.uv.extra-build-dependencies]` section handles this.
 
 ---
 
@@ -83,6 +85,11 @@ Replays each trajectory inside the AI2-THOR Unity simulator (requires `DISPLAY`)
 injects an `observation_graph` field — a symbolic object-relation graph of the full
 environment — into every step.
 
+> **Note:** This step is very slow (~75 s per episode) because each episode requires
+> a full Unity scene reset plus per-step graph extraction. For the full 4027-episode
+> training set, expect roughly **84 hours** of wall-clock time. The script supports
+> resuming: it skips episodes already present in the output file.
+
 ---
 
 ## VirtualHome (`./data_virtualhome/`)
@@ -108,7 +115,7 @@ Xvfb :1 -screen 0 1024x768x24 &
 ```
 
 Download the VirtualHome Linux simulator binary (`linux_exec.v2.3.0.x86_64`) from the
-[VirtualHome releases](http://virtual-home.org/release/simulator/v2.0/v2.3.0/linux_exec.v2.3.0.zip)
+[VirtualHome releases](http://virtual-home.org/release/simulator/v2.0/v2.3.0/linux_exec.zip)
 and place it under `./simulation/` (project root).
 
 ### Step 1: Start the Unity simulator
@@ -171,3 +178,30 @@ ID:
 
 Output: `data_virtualhome/seen_domain/<task>/env{id}.jsonl`,
 `data_virtualhome/unseen_domain/<task>/env{id}.jsonl`.
+
+---
+
+## Troubleshooting
+
+### `networkx` / `fractions.gcd` ImportError
+
+`textworld` (an ALFWorld dependency) pulls in `networkx==2.3`, which is incompatible
+with Python 3.12+ (`fractions.gcd` was removed in Python 3.9). The
+`[tool.uv] override-dependencies` section in `pyproject.toml` forces
+`networkx>=3.0` to resolve this. If you see:
+
+```
+ImportError: cannot import name 'gcd' from 'fractions'
+```
+
+make sure `pyproject.toml` includes `"networkx>=3.0"` in `override-dependencies`
+and re-run `uv sync`.
+
+### Step 2 `FileNotFoundError` for `traj_data.json`
+
+The expert trajectories collected in Step 1 may reference trials from multiple
+`json_2.1.1` splits (`train`, `valid_seen`, `valid_train`, `valid_unseen`), not
+just `train`. `generate_alfworld_data.py` searches all four splits when loading
+trajectory data. If you encounter a `FileNotFoundError`, ensure `alfworld-download
+--extra` has completed successfully and all splits are present under
+`$ALFWORLD_DATA/json_2.1.1/`.
